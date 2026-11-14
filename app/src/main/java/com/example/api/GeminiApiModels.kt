@@ -13,40 +13,40 @@ class HttpApiException(val code: Int, message: String, cause: Throwable? = null)
 enum class ApiBaseUrlType(
     val key: String,
     val displayName: String,
+    val badgeLabel: String,
     val endpointHint: String,
     val placeholderUrl: String,
     val defaultModel: String
 ) {
-    ANTROPIC(
-        key = "antropic",
-        displayName = "antropic",
-        endpointHint = "Anthropic Messages (/v1/messages)",
-        placeholderUrl = "https://api.anthropic.com",
-        defaultModel = "claude-3-5-sonnet-latest"
-    ),
-    CHAT_ID(
-        key = "chat_id",
-        displayName = "chat_id",
-        endpointHint = "Chat Completions (/v1/chat/completions)",
-        placeholderUrl = "https://openrouter.ai/api/v1",
-        defaultModel = "google/gemini-2.5-flash"
-    ),
-    RESPONSE(
-        key = "response",
-        displayName = "response",
-        endpointHint = "Responses API (/v1/responses)",
-        placeholderUrl = "https://api.openai.com/v1",
+    WITH_V1(
+        key = "with_v1",
+        displayName = "Dengan /v1",
+        badgeLabel = "Tipe OpenAI (/v1/chat/completions)",
+        endpointHint = "Format OpenAI (pakai /v1): .../v1/chat/completions",
+        placeholderUrl = "https://api.openai.com/v1 atau https://localhost:8080/v1",
         defaultModel = "gpt-4o-mini"
+    ),
+    WITHOUT_V1(
+        key = "without_v1",
+        displayName = "Tanpa /v1",
+        badgeLabel = "Tipe Anthropic (/v1/messages)",
+        endpointHint = "Format Anthropic (Base URL tanpa /v1): .../v1/messages",
+        placeholderUrl = "https://api.anthropic.com atau https://127.0.0.1:8080",
+        defaultModel = "claude-3-5-sonnet-latest"
     );
 
     companion object {
         fun fromKey(key: String?): ApiBaseUrlType {
-            return entries.firstOrNull { it.key.equals(key?.trim(), ignoreCase = true) } ?: CHAT_ID
+            return when (key?.trim()?.lowercase()) {
+                "without_v1", "antropic", "anthropic" -> WITHOUT_V1
+                "with_v1", "chat_id", "response", "openai" -> WITH_V1
+                else -> WITH_V1
+            }
         }
     }
 }
 
-// --- Chat Completions (chat_id) Models ---
+// --- OpenAI Chat Completions (WITH_V1) Models ---
 @JsonClass(generateAdapter = true)
 data class OpenRouterChatRequest(
     val model: String,
@@ -60,7 +60,7 @@ data class OpenRouterChatRequest(
 
 @JsonClass(generateAdapter = true)
 data class OpenRouterMessage(
-    val role: String, // "system" or "user"
+    val role: String, // "system", "user", or "assistant"
     val content: String
 )
 
@@ -84,7 +84,7 @@ data class OpenRouterChoiceMessage(
     val content: String?
 )
 
-// --- Anthropic (antropic) Models ---
+// --- Anthropic (WITHOUT_V1) Models ---
 @JsonClass(generateAdapter = true)
 data class AnthropicMessage(
     val role: String,
@@ -110,36 +110,6 @@ data class AnthropicContentBlock(
 @JsonClass(generateAdapter = true)
 data class AnthropicResponse(
     val content: List<AnthropicContentBlock>? = null
-)
-
-// --- OpenAI Responses API (response) Models ---
-@JsonClass(generateAdapter = true)
-data class ResponsesApiRequest(
-    val model: String,
-    val instructions: String? = null,
-    val input: String,
-    val temperature: Float? = null,
-    @Json(name = "max_output_tokens")
-    val maxOutputTokens: Int? = null
-)
-
-@JsonClass(generateAdapter = true)
-data class ResponsesApiContentBlock(
-    val type: String? = null,
-    val text: String? = null
-)
-
-@JsonClass(generateAdapter = true)
-data class ResponsesApiOutputItem(
-    val type: String? = null,
-    val content: List<ResponsesApiContentBlock>? = null
-)
-
-@JsonClass(generateAdapter = true)
-data class ResponsesApiResponse(
-    @Json(name = "output_text")
-    val outputText: String? = null,
-    val output: List<ResponsesApiOutputItem>? = null
 )
 
 // --- Domain Exam Models ---

@@ -1,79 +1,8 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <!-- Subtle Drop Shadow of the Paper -->
-    <path
-        android:fillColor="#15000000"
-        android:pathData="M 33,28 h 32 l 12,12 v 42 a 4,4 0 0,1 -4,4 H 33 a 4,4 0 0,1 -4,-4 V 32 a 4,4 0 0,1 4,-4 Z" />
-
-    <!-- White Paper Sheet -->
-    <path
-        android:fillColor="#F8FAFC"
-        android:pathData="M 32,26 h 32 l 12,12 v 42 a 4,4 0 0,1 -4,4 H 32 a 4,4 0 0,1 -4,-4 V 30 a 4,4 0 0,1 4,-4 Z" />
-
-    <!-- Corner Fold Shadow -->
-    <path
-        android:fillColor="#1F000000"
-        android:pathData="M 64,26 v 12 h 12 Z" />
-
-    <!-- Folded Corner Sheet -->
-    <path
-        android:fillColor="#E2E8F0"
-        android:pathData="M 64,26 v 8 a 4,4 0 0,0 4,4 h 8 Z" />
-
-    <!-- Bold Title Text Lines representing "QUIZ" -->
-    <!-- Top Bold Blue Bar of the Quiz -->
-    <path
-        android:fillColor="#4F46E5"
-        android:pathData="M 36,40 h 16 v 3 h -16 z" />
-
-    <!-- Option A Circle and Text -->
-    <path
-        android:fillColor="#94A3B8"
-        android:pathData="M 38,50 A 3.5,3.5 0 1,1 34.5,46.5 A 3.5,3.5 0 0,1 38,50 M 38,50 A 2.5,2.5 0 1,0 35.5,47.5 A 2.5,2.5 0 0,0 38,50" />
-    <path
-        android:fillColor="#94A3B8"
-        android:pathData="M 44,48.5 h 22 v 2.5 h -22 z" />
-
-    <!-- Selected Option B: Solid Cosmos Green/Teal Circle with Checkmark -->
-    <path
-        android:fillColor="#10B981"
-        android:pathData="M 38,60 A 3.5,3.5 0 1,1 34.5,56.5 A 3.5,3.5 0 0,1 38,60" />
-    <!-- Option B Text -->
-    <path
-        android:fillColor="#1E293B"
-        android:pathData="M 44,58.5 h 25 v 2.5 h -25 z" />
-
-    <!-- Option C Circle and Text -->
-    <path
-        android:fillColor="#94A3B8"
-        android:pathData="M 38,70 A 3.5,3.5 0 1,1 34.5,66.5 A 3.5,3.5 0 0,1 38,70 M 38,70 A 2.5,2.5 0 1,0 35.5,67.5 A 2.5,2.5 0 0,0 38,70" />
-    <path
-        android:fillColor="#94A3B8"
-        android:pathData="M 44,68.5 h 18 v 2.5 h -18 z" />
-
-    <!-- Yellow / Orange Pencil leaning diagonally on the right side -->
-    <!-- Pencil Lead Point (Black) -->
-    <path
-        android:fillColor="#1E293B"
-        android:pathData="M 52,72.5 l 3.5,-1 l -1,3.5 z" />
-
-    <!-- Pencil Wood Triangle (Peach) -->
-    <path
-        android:fillColor="#FDBA74"
-        android:pathData="M 54.5,70.5 l 1.5,-1.5 l 6,6 l -1.5,1.5 z" />
-
-    <!-- Pencil Yellow Body -->
-    <path
-        android:fillColor="#EAB308"
-        android:pathData="M 59,66 l 16,-16 c 1,-1 2.5,-1 3.5,0 l 1.5,1.5 c 1,1 1,2.5 0,3.5 l -16,16 z" />
-
-    <!-- Pencil Pink Eraser -->
-    <path
-        android:fillColor="#F472B6"
-        android:pathData="M 76,49 l 6,-6 c 0.8,-0.8 2,-0.8 2.8,0 l 1.2,1.2 c 0.8,0.8 0.8,2 0,2.8 l -6,6 z" />
-
-</vector>
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/app_icon_foreground"
+        android:gravity="center" />
+</layer-list>

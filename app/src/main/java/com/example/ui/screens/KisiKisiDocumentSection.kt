@@ -6,7 +6,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,13 +36,13 @@ fun KisiKisiDocumentSection(
 ) {
     val attachedDoc by viewModel.attachedDocument.collectAsState()
     val extractionState by viewModel.documentExtractionState.collectAsState()
-    var showT2TPreview by remember { mutableStateOf(false) }
+    var showPreview by remember { mutableStateOf(false) }
 
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            showT2TPreview = false
+            showPreview = false
             viewModel.processKisiKisiDocument(uri)
         }
     }
@@ -55,39 +54,30 @@ fun KisiKisiDocumentSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Atau Unggah Dokumen Kisi-Kisi",
+                text = "Lampiran Dokumen",
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = CosmosTextLight
+                color = AcademicTextPrimary
             )
-            Box(
-                modifier = Modifier
-                    .background(CosmosSecondary.copy(alpha = 0.16f), RoundedCornerShape(20.dp))
-                    .border(1.dp, CosmosSecondary.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
-                    .padding(horizontal = 10.dp, vertical = 3.dp)
-            ) {
-                Text(
-                    text = "Maks < 5 MB",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = CosmosSecondary
-                )
-            }
+            Text(
+                text = "Maks. 5 MB",
+                style = MaterialTheme.typography.labelSmall,
+                color = AcademicTextMuted
+            )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         Card(
             shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = CosmosSurface),
-            border = BorderStroke(1.dp, CosmosCardBorder),
+            colors = CardDefaults.cardColors(containerColor = AcademicSurface),
+            border = BorderStroke(1.dp, AcademicBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = "Mendukung PDF, DOCX, PPTX, XLSX, ODT, ODP, TXT, MD, CSV, HTML, RTF. Dokumen otomatis diekstrak secara lokal menjadi teks terstruktur untuk model AI (T2T).",
+                    text = "Mendukung PDF, DOCX, PPTX, XLSX, ODT, ODP, TXT, CSV, HTML, dan RTF.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = CosmosTextMuted
+                    color = AcademicTextMuted
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -97,8 +87,8 @@ fun KisiKisiDocumentSection(
                         documentPickerLauncher.launch(DocumentTextExtractor.SUPPORTED_MIME_TYPES)
                     },
                     enabled = extractionState !is UiState.Loading,
-                    border = BorderStroke(1.2.dp, CosmosTeal),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CosmosTeal),
+                    border = BorderStroke(1.dp, AcademicBlue),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AcademicBlue),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -107,35 +97,34 @@ fun KisiKisiDocumentSection(
                 ) {
                     if (extractionState is UiState.Loading) {
                         CircularProgressIndicator(
-                            color = CosmosTeal,
+                            color = AcademicBlue,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Mengekstrak Dokumen ke Teks...", fontWeight = FontWeight.SemiBold)
+                        Text("Membaca Dokumen...", fontWeight = FontWeight.SemiBold)
                     } else {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Pilih File Dokumen",
-                            tint = CosmosTeal,
+                            tint = AcademicBlue,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (attachedDoc == null) "Pilih File Dokumen (< 5 MB)" else "Ganti File Dokumen (< 5 MB)",
-                            fontWeight = FontWeight.Bold
+                            text = if (attachedDoc == null) "Pilih File Dokumen (< 5 MB)" else "Ganti File Dokumen",
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
 
-                // Error feedback
                 if (extractionState is UiState.Error) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(CosmosError.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                            .border(1.dp, CosmosError, RoundedCornerShape(10.dp))
+                            .background(AcademicError.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                            .border(1.dp, AcademicError, RoundedCornerShape(10.dp))
                             .padding(10.dp)
                             .testTag("document_error_banner"),
                         verticalAlignment = Alignment.CenterVertically
@@ -143,29 +132,27 @@ fun KisiKisiDocumentSection(
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = "Error Dokumen",
-                            tint = CosmosError,
+                            tint = AcademicError,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = (extractionState as UiState.Error).message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = CosmosTextLight,
-                            fontWeight = FontWeight.Medium
+                            color = AcademicTextPrimary
                         )
                     }
                 }
 
-                // Attached document summary & T2T preview
                 attachedDoc?.let { doc ->
                     Spacer(modifier = Modifier.height(12.dp))
                     AttachedDocumentCard(
                         doc = doc,
-                        showPreview = showT2TPreview,
-                        onTogglePreview = { showT2TPreview = !showT2TPreview },
+                        showPreview = showPreview,
+                        onTogglePreview = { showPreview = !showPreview },
                         onCopyToEditor = { onInsertTextToEditor(doc.extractedText) },
                         onRemove = {
-                            showT2TPreview = false
+                            showPreview = false
                             viewModel.clearAttachedDocument()
                         }
                     )
@@ -194,8 +181,8 @@ private fun AttachedDocumentCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(CosmosTeal.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
-            .border(1.dp, CosmosTeal.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+            .background(AcademicBlueTint, RoundedCornerShape(12.dp))
+            .border(1.dp, AcademicBlue.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
             .padding(12.dp)
             .testTag("attached_document_card")
     ) {
@@ -206,13 +193,13 @@ private fun AttachedDocumentCard(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .background(CosmosTeal)
+                    .background(AcademicBlue)
                     .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 Text(
                     text = doc.formatLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Black,
+                    fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
             }
@@ -221,15 +208,15 @@ private fun AttachedDocumentCard(
                 Text(
                     text = doc.fileName,
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = CosmosTextLight,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AcademicTextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "$sizeLabel • ${doc.extractedText.length} karakter T2T",
+                    text = "$sizeLabel • ${doc.extractedText.length} karakter",
                     style = MaterialTheme.typography.labelSmall,
-                    color = CosmosTeal
+                    color = AcademicBlue
                 )
             }
             IconButton(
@@ -241,13 +228,13 @@ private fun AttachedDocumentCard(
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = "Hapus Dokumen",
-                    tint = CosmosError,
+                    tint = AcademicError,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -261,14 +248,14 @@ private fun AttachedDocumentCard(
                 Icon(
                     imageVector = if (showPreview) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = null,
-                    tint = CosmosTeal,
+                    tint = AcademicBlue,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = if (showPreview) "Sembunyikan Teks T2T" else "Lihat Teks T2T",
+                    text = if (showPreview) "Tutup Pratinjau" else "Pratinjau Teks",
                     fontSize = 12.sp,
-                    color = CosmosTeal,
+                    color = AcademicBlue,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -281,14 +268,14 @@ private fun AttachedDocumentCard(
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = null,
-                    tint = CosmosSecondary,
+                    tint = AcademicTextPrimary,
                     modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Salin ke Kolom Teks",
+                    text = "Salin ke Catatan",
                     fontSize = 12.sp,
-                    color = CosmosSecondary,
+                    color = AcademicTextPrimary,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -297,7 +284,7 @@ private fun AttachedDocumentCard(
         AnimatedVisibility(visible = showPreview) {
             val previewText = remember(doc.t2tPayload) {
                 if (doc.t2tPayload.length > 1500) {
-                    doc.t2tPayload.take(1500) + "\n\n[...Preview dipotong. Total ${doc.t2tPayload.length} karakter siap dikirim ke AI...]"
+                    doc.t2tPayload.take(1500) + "\n\n[...Pratinjau dipotong. Total ${doc.t2tPayload.length} karakter siap diproses...]"
                 } else {
                     doc.t2tPayload
                 }
@@ -305,11 +292,11 @@ private fun AttachedDocumentCard(
             Text(
                 text = previewText,
                 style = MaterialTheme.typography.bodySmall,
-                color = CosmosTextMuted,
+                color = AcademicTextMuted,
                 modifier = Modifier
                     .padding(top = 8.dp)
                     .fillMaxWidth()
-                    .background(CosmosBackground.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .background(AcademicSurface, RoundedCornerShape(8.dp))
                     .padding(10.dp)
             )
         }

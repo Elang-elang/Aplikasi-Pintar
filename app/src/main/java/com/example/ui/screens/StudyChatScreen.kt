@@ -3,7 +3,7 @@ package com.example.ui.screens
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,9 +14,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -26,7 +26,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +35,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.EducationCatalog
+import com.example.model.StudySuggestion
+import com.example.ui.components.AcademicBookEmblem
+import com.example.ui.components.StudyTypingIndicator
 import com.example.ui.theme.*
 import com.example.util.DocumentTextExtractor
 import com.example.util.ExtractedDocument
@@ -50,12 +53,11 @@ fun StudyChatScreen(
     viewModel: ExamViewModel,
     onBack: () -> Unit
 ) {
+    val session by viewModel.userSession.collectAsState()
     val messages by viewModel.studyMessages.collectAsState()
     val chatState by viewModel.studyChatState.collectAsState()
     val attachedDoc by viewModel.studyAttachedDocument.collectAsState()
     val docExtractionState by viewModel.studyDocExtractionState.collectAsState()
-    val modelName by viewModel.modelName.collectAsState()
-    val baseUrlType by viewModel.baseUrlType.collectAsState()
 
     var inputText by remember { mutableStateOf("") }
     var selectedMode by remember { mutableStateOf(StudyExplainMode.EXPLAIN_SIMPLE) }
@@ -63,6 +65,13 @@ fun StudyChatScreen(
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+
+    val profileBadge = remember(session) {
+        EducationCatalog.formatProfileBadge(session?.sekolah, session?.kelas, session?.bidang)
+    }
+    val starterSuggestions = remember(session) {
+        EducationCatalog.starterSuggestions(session?.sekolah, session?.kelas, session?.bidang)
+    }
 
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -79,12 +88,12 @@ fun StudyChatScreen(
     }
 
     Scaffold(
-        containerColor = CosmosBackground,
+        containerColor = AcademicBackground,
         topBar = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(CosmosSurface)
+                    .background(AcademicSurface)
                     .statusBarsPadding()
             ) {
                 Row(
@@ -99,45 +108,33 @@ fun StudyChatScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Kembali ke Lobby",
-                            tint = CosmosTextLight
+                            contentDescription = "Kembali",
+                            tint = AcademicTextPrimary
                         )
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(CosmosTeal, CosmosPrimary))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    AcademicBookEmblem(size = 36.dp)
 
                     Spacer(modifier = Modifier.width(10.dp))
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Tutor Belajar AI",
+                            text = "Tutor Belajar",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = CosmosTextLight,
+                            color = AcademicTextPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        val activeModelLabel = modelName.ifBlank { baseUrlType.defaultModel }
-                        Text(
-                            text = "Penjelasan Teks & Dokumen (< 5 MB) • $activeModelLabel",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = CosmosTeal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (profileBadge.isNotBlank()) {
+                            Text(
+                                text = profileBadge,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AcademicBlue,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     if (messages.isNotEmpty() || attachedDoc != null) {
@@ -150,8 +147,8 @@ fun StudyChatScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Mulai Obrolan Baru",
-                                tint = CosmosTextMuted
+                                contentDescription = "Mulai Sesi Baru",
+                                tint = AcademicTextMuted
                             )
                         }
                     }
@@ -159,7 +156,7 @@ fun StudyChatScreen(
                     ThemeToggleButton(viewModel = viewModel)
                 }
 
-                // Mode selector chips for learning explanations
+                // Mode selector chips
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -169,12 +166,16 @@ fun StudyChatScreen(
                 ) {
                     StudyExplainMode.entries.forEach { mode ->
                         val isSelected = selectedMode == mode
+                        val chipBg by animateColorAsState(
+                            targetValue = if (isSelected) AcademicBlueTint else AcademicBackground,
+                            label = "mode_chip_bg"
+                        )
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) CosmosTeal.copy(alpha = 0.2f) else CosmosBackground,
+                            color = chipBg,
                             border = BorderStroke(
                                 width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) CosmosTeal else CosmosCardBorder
+                                color = if (isSelected) AcademicBlue else AcademicBorder
                             ),
                             modifier = Modifier
                                 .height(36.dp)
@@ -190,33 +191,32 @@ fun StudyChatScreen(
                                     text = mode.label,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) CosmosTeal else CosmosTextMuted
+                                    color = if (isSelected) AcademicBlue else AcademicTextMuted
                                 )
                             }
                         }
                     }
                 }
-                HorizontalDivider(color = CosmosCardBorder)
+                HorizontalDivider(color = AcademicBorder)
             }
         },
         bottomBar = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(CosmosSurface)
+                    .background(AcademicSurface)
                     .navigationBarsPadding()
                     .imePadding()
             ) {
-                HorizontalDivider(color = CosmosCardBorder)
+                HorizontalDivider(color = AcademicBorder)
 
-                // Document extraction error banner
                 if (docExtractionState is UiState.Error) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .background(CosmosError.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                            .border(1.dp, CosmosError, RoundedCornerShape(10.dp))
+                            .background(AcademicError.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                            .border(1.dp, AcademicError, RoundedCornerShape(10.dp))
                             .padding(10.dp)
                             .testTag("study_doc_error_banner"),
                         verticalAlignment = Alignment.CenterVertically
@@ -224,20 +224,19 @@ fun StudyChatScreen(
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = "Error Dokumen",
-                            tint = CosmosError,
+                            tint = AcademicError,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = (docExtractionState as UiState.Error).message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = CosmosTextLight,
+                            color = AcademicTextPrimary,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                // Document extracting progress bar
                 if (docExtractionState is UiState.Loading) {
                     Row(
                         modifier = Modifier
@@ -246,20 +245,19 @@ fun StudyChatScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         CircularProgressIndicator(
-                            color = CosmosTeal,
+                            color = AcademicBlue,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Mengubah dokumen menjadi teks T2T untuk AI...",
+                            text = "Membaca dokumen...",
                             style = MaterialTheme.typography.bodySmall,
-                            color = CosmosTeal
+                            color = AcademicBlue
                         )
                     }
                 }
 
-                // Pending attached document chip
                 attachedDoc?.let { doc ->
                     PendingStudyDocChip(
                         doc = doc,
@@ -274,15 +272,14 @@ fun StudyChatScreen(
                         .padding(horizontal = 10.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
-                    // Attach document (< 5 MB)
                     FilledTonalIconButton(
                         onClick = {
                             documentPickerLauncher.launch(DocumentTextExtractor.SUPPORTED_MIME_TYPES)
                         },
                         enabled = docExtractionState !is UiState.Loading && chatState !is UiState.Loading,
                         colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = CosmosTeal.copy(alpha = 0.16f),
-                            contentColor = CosmosTeal
+                            containerColor = AcademicBlueTint,
+                            contentColor = AcademicBlue
                         ),
                         modifier = Modifier
                             .size(48.dp)
@@ -302,9 +299,9 @@ fun StudyChatScreen(
                         placeholder = {
                             Text(
                                 text = if (attachedDoc != null) {
-                                    "Tambahkan pertanyaan tentang dokumen..."
+                                    "Tulis pertanyaan tentang dokumen..."
                                 } else {
-                                    "Tempel teks atau tanya materi belajar..."
+                                    "Tulis materi atau pertanyaan belajar..."
                                 },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -335,10 +332,10 @@ fun StudyChatScreen(
                         },
                         enabled = canSend,
                         colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = CosmosTeal,
+                            containerColor = AcademicBlue,
                             contentColor = Color.White,
-                            disabledContainerColor = CosmosTeal.copy(alpha = 0.25f),
-                            disabledContentColor = Color.White.copy(alpha = 0.45f)
+                            disabledContainerColor = AcademicBlue.copy(alpha = 0.25f),
+                            disabledContentColor = Color.White.copy(alpha = 0.6f)
                         ),
                         modifier = Modifier
                             .size(48.dp)
@@ -346,7 +343,7 @@ fun StudyChatScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Kirim Pesan Belajar"
+                            contentDescription = "Kirim Pertanyaan"
                         )
                     }
                 }
@@ -360,7 +357,8 @@ fun StudyChatScreen(
         ) {
             if (messages.isEmpty() && chatState !is UiState.Loading) {
                 StudyWelcomeSection(
-                    selectedMode = selectedMode,
+                    profileBadge = profileBadge,
+                    suggestions = starterSuggestions,
                     onPickDocument = {
                         documentPickerLauncher.launch(DocumentTextExtractor.SUPPORTED_MIME_TYPES)
                     },
@@ -386,14 +384,14 @@ fun StudyChatScreen(
                             message = msg,
                             onCopyResponse = { text ->
                                 clipboardManager.setText(AnnotatedString(text))
-                                Toast.makeText(context, "Penjelasan disalin ke clipboard", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Penjelasan disalin", Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
 
                     if (chatState is UiState.Loading) {
                         item(key = "loading_bubble") {
-                            StudyAiTypingBubble()
+                            StudyTypingIndicator(label = "Menyusun penjelasan...")
                         }
                     }
 
@@ -402,8 +400,8 @@ fun StudyChatScreen(
                             val errMsg = (chatState as UiState.Error).message
                             Card(
                                 shape = RoundedCornerShape(14.dp),
-                                colors = CardDefaults.cardColors(containerColor = CosmosError.copy(alpha = 0.14f)),
-                                border = BorderStroke(1.dp, CosmosError),
+                                colors = CardDefaults.cardColors(containerColor = AcademicError.copy(alpha = 0.08f)),
+                                border = BorderStroke(1.dp, AcademicError),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("study_chat_error_banner")
@@ -414,15 +412,15 @@ fun StudyChatScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Warning,
-                                        contentDescription = "Error Chat",
-                                        tint = CosmosError,
+                                        contentDescription = "Peringatan",
+                                        tint = AcademicError,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
                                         text = errMsg,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = CosmosTextLight,
+                                        color = AcademicTextPrimary,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -437,48 +435,35 @@ fun StudyChatScreen(
 
 @Composable
 private fun StudyWelcomeSection(
-    selectedMode: StudyExplainMode,
+    profileBadge: String,
+    suggestions: List<StudySuggestion>,
     onPickDocument: () -> Unit,
     onQuickPromptClick: (String, StudyExplainMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.Center,
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(CircleShape)
-                .background(CosmosTeal.copy(alpha = 0.15f))
-                .border(1.5.dp, CosmosTeal, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Star,
-                contentDescription = null,
-                tint = CosmosTeal,
-                modifier = Modifier.size(32.dp)
-            )
-        }
+        AcademicBookEmblem(size = 60.dp)
 
         Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            text = "Penjelasan Teks & Dokumen AI",
+            text = "Penjelasan Teks & Dokumen",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = CosmosTextLight
+            color = AcademicTextPrimary
         )
 
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Kirim uraian teks pelajaran atau unggah file dokumen (PDF, DOCX, PPTX, XLSX, TXT < 5 MB). AI akan menjelaskan materinya secara terstruktur untuk membantu Anda belajar.",
+            text = "Tulis pertanyaan atau lampirkan file PDF, DOCX, PPTX, maupun XLSX (< 5 MB) untuk dijelaskan langkah demi langkah.",
             style = MaterialTheme.typography.bodySmall,
-            color = CosmosTextMuted,
+            color = AcademicTextMuted,
             lineHeight = 19.sp
         )
 
@@ -486,8 +471,8 @@ private fun StudyWelcomeSection(
 
         OutlinedButton(
             onClick = onPickDocument,
-            border = BorderStroke(1.2.dp, CosmosTeal),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = CosmosTeal),
+            border = BorderStroke(1.dp, AcademicBlue),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AcademicBlue),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -496,75 +481,51 @@ private fun StudyWelcomeSection(
         ) {
             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Unggah Dokumen Belajar (< 5 MB)", fontWeight = FontWeight.Bold)
+            Text("Lampirkan Dokumen (< 5 MB)", fontWeight = FontWeight.SemiBold)
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(22.dp))
+
+        val suggestionHeader = if (profileBadge.isNotBlank()) {
+            "Saran Belajar ($profileBadge)"
+        } else {
+            "Saran Materi"
+        }
 
         Text(
-            text = "Contoh Permintaan Belajar (${selectedMode.label}):",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = CosmosTextMuted,
+            text = suggestionHeader,
+            style = MaterialTheme.typography.labelLarge,
+            color = AcademicTextMuted,
             modifier = Modifier.align(Alignment.Start)
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        val quickSuggestions = listOf(
-            Triple(
-                "Jelaskan konsep fotosintesis tahap demi tahap agar mudah dipahami",
-                "Penjelasan Konsep",
-                StudyExplainMode.EXPLAIN_SIMPLE
-            ),
-            Triple(
-                "Buatkan ringkasan poin-poin inti dari materi ini untuk persiapan ujian",
-                "Ringkasan Materi",
-                StudyExplainMode.SUMMARY
-            ),
-            Triple(
-                "Berikan contoh soal dan pembahasan singkat dari topik Hukum Newton",
-                "Contoh & Latihan",
-                StudyExplainMode.EXAMPLES
-            )
-        )
+        Spacer(modifier = Modifier.height(10.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            quickSuggestions.forEach { (promptText, label, mode) ->
+            suggestions.forEach { item ->
                 Card(
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = CosmosSurface),
-                    border = BorderStroke(1.dp, CosmosCardBorder),
+                    colors = CardDefaults.cardColors(containerColor = AcademicSurface),
+                    border = BorderStroke(1.dp, AcademicBorder),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onQuickPromptClick(promptText, mode) }
+                        .clickable { onQuickPromptClick(item.prompt, item.mode) }
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = CosmosSecondary,
-                            modifier = Modifier.size(18.dp)
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AcademicBlue
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = CosmosTeal
-                            )
-                            Text(
-                                text = promptText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = CosmosTextLight,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = item.prompt,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AcademicTextPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -589,8 +550,8 @@ private fun PendingStudyDocChip(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(CosmosTeal.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
-            .border(1.dp, CosmosTeal.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .background(AcademicBlueTint, RoundedCornerShape(12.dp))
+            .border(1.dp, AcademicBlue.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp)
             .testTag("study_attached_doc_chip"),
         verticalAlignment = Alignment.CenterVertically
@@ -598,13 +559,13 @@ private fun PendingStudyDocChip(
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(6.dp))
-                .background(CosmosTeal)
+                .background(AcademicBlue)
                 .padding(horizontal = 7.dp, vertical = 4.dp)
         ) {
             Text(
                 text = doc.formatLabel,
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Black,
+                fontWeight = FontWeight.Bold,
                 color = Color.White
             )
         }
@@ -613,15 +574,15 @@ private fun PendingStudyDocChip(
             Text(
                 text = doc.fileName,
                 style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = CosmosTextLight,
+                fontWeight = FontWeight.SemiBold,
+                color = AcademicTextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "$sizeLabel • ${doc.extractedText.length} karakter T2T siap dijelaskan AI",
+                text = "$sizeLabel • ${doc.extractedText.length} karakter",
                 style = MaterialTheme.typography.labelSmall,
-                color = CosmosTeal
+                color = AcademicBlue
             )
         }
         IconButton(
@@ -633,7 +594,7 @@ private fun PendingStudyDocChip(
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Hapus Lampiran",
-                tint = CosmosError,
+                tint = AcademicError,
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -657,60 +618,37 @@ private fun StudyMessageBubble(
                 bottomEnd = if (message.isUser) 4.dp else 16.dp
             ),
             colors = CardDefaults.cardColors(
-                containerColor = if (message.isUser) CosmosPrimary.copy(alpha = 0.24f) else CosmosSurface
+                containerColor = if (message.isUser) AcademicBlueTint else AcademicSurface
             ),
             border = BorderStroke(
                 1.dp,
-                if (message.isUser) CosmosPrimary.copy(alpha = 0.5f) else CosmosCardBorder
+                if (message.isUser) AcademicBlue.copy(alpha = 0.35f) else AcademicBorder
             ),
             modifier = Modifier.widthIn(max = 330.dp)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 if (message.isUser) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        message.modeLabel?.let { label ->
-                            Box(
-                                modifier = Modifier
-                                    .background(CosmosSecondary.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CosmosSecondary
-                                )
-                            }
+                    if (message.attachedDocName != null) {
+                        Box(
+                            modifier = Modifier
+                                .background(AcademicBlue.copy(alpha = 0.14f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = message.attachedDocName,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = AcademicBlue,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        message.attachedDocName?.let { docName ->
-                            Box(
-                                modifier = Modifier
-                                    .background(CosmosTeal.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "Dokumen: $docName",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CosmosTeal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                    if (message.modeLabel != null || message.attachedDocName != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                     }
                     Text(
                         text = message.displayText,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = CosmosTextLight
+                        color = AcademicTextPrimary
                     )
                 } else {
                     Row(
@@ -719,10 +657,10 @@ private fun StudyMessageBubble(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Tutor Belajar AI",
+                            text = "Penjelasan Materi",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = CosmosTeal
+                            color = AcademicBlue
                         )
                         TextButton(
                             onClick = { onCopyResponse(message.displayText) },
@@ -732,7 +670,7 @@ private fun StudyMessageBubble(
                             Text(
                                 text = "Salin",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = CosmosSecondary,
+                                color = AcademicBlue,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -742,42 +680,11 @@ private fun StudyMessageBubble(
                         Text(
                             text = message.displayText,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = CosmosTextLight,
-                            lineHeight = 21.sp
+                            color = AcademicTextPrimary,
+                            lineHeight = 22.sp
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StudyAiTypingBubble() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start
-    ) {
-        Card(
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = CosmosSurface),
-            border = BorderStroke(1.dp, CosmosCardBorder)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(
-                    color = CosmosTeal,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "AI sedang menyusun penjelasan belajar...",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = CosmosTextMuted
-                )
             }
         }
     }

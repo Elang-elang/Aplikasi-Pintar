@@ -1,6 +1,6 @@
 {
-  "name": "Ujian Pintar AI",
-  "description": "Aplikasi simulasi ujian offline-first dengan pembuatan soal otomatis dan penilaian esai berbasis AI.",
+  "name": "Pembelajaran dengan AI",
+  "description": "Aplikasi pendamping belajar interaktif dengan tutor penjelasan materi dan latihan soal berbasis AI.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -16,6 +16,8 @@ import com.example.database.ExamAttempt
 import com.example.database.ExamDatabase
 import com.example.database.SavedExam
 import com.example.database.UserSession
+import com.example.model.EducationCatalog
+import com.example.model.SchoolLevel
 import com.example.util.DocumentExtractionResult
 import com.example.util.DocumentTextExtractor
 import com.example.util.ExtractedDocument
@@ -160,7 +162,7 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
     val baseUrl: StateFlow<String> = _baseUrl.asStateFlow()
 
     private val _baseUrlType = MutableStateFlow(
-        ApiBaseUrlType.fromKey(sharedPrefs.getString("base_url_type", ApiBaseUrlType.CHAT_ID.key))
+        ApiBaseUrlType.fromKey(sharedPrefs.getString("base_url_type", ApiBaseUrlType.WITH_V1.key))
     )
     val baseUrlType: StateFlow<ApiBaseUrlType> = _baseUrlType.asStateFlow()
 
@@ -193,8 +195,8 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedEssayCount = MutableStateFlow(sharedPrefs.getInt("selected_essay_count", 5))
     val selectedEssayCount: StateFlow<Int> = _selectedEssayCount.asStateFlow()
 
-    // Theme state
-    private val _isDarkTheme = MutableStateFlow(sharedPrefs.getBoolean("is_dark_theme", true))
+    // Theme state (Light-first clean academic white & blue by default)
+    private val _isDarkTheme = MutableStateFlow(sharedPrefs.getBoolean("is_dark_theme_academic_v1", false))
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
     // Timer states
@@ -246,12 +248,15 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun login(nama: String, kelas: String, absen: String) {
+    fun login(nama: String, sekolah: String, kelas: String, bidang: String) {
         viewModelScope.launch {
+            val cleanLevel = SchoolLevel.fromDisplayName(sekolah)?.displayName
+                ?: sekolah.trim().ifBlank { SchoolLevel.SMA.displayName }
             val session = UserSession(
                 nama = nama.trim(),
-                kelas = kelas.trim().ifBlank { "Umum" },
-                absen = absen.trim().ifBlank { "-" },
+                sekolah = cleanLevel,
+                kelas = kelas.trim().ifBlank { "10" },
+                bidang = bidang.trim().ifBlank { "Umum" },
                 isLogin = true
             )
             dao.saveUserSession(session)
@@ -287,7 +292,7 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleTheme() {
         val newVal = !_isDarkTheme.value
         _isDarkTheme.value = newVal
-        sharedPrefs.edit().putBoolean("is_dark_theme", newVal).apply()
+        sharedPrefs.edit().putBoolean("is_dark_theme_academic_v1", newVal).apply()
     }
 
     fun setTimerMinutes(minutes: Int) {
@@ -327,7 +332,7 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         apiKey: String,
         model: String
     ) {
-        val cleanUrl = baseUrl.trim()
+        val cleanUrl = GeminiApiClient.normalizeBaseUrlInput(baseUrl)
         val cleanKey = apiKey.trim()
         val cleanModel = model.trim()
 
@@ -386,7 +391,7 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         apiTestJob = viewModelScope.launch {
-            val cleanUrl = baseUrl.trim()
+            val cleanUrl = GeminiApiClient.normalizeBaseUrlInput(baseUrl)
             val cleanKey = apiKey.trim()
             val cleanModel = model.trim()
             var succeeded = false
@@ -566,15 +571,28 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         _studyChatState.value = UiState.Loading
 
         viewModelScope.launch {
-            val learnerName = _userSession.value?.nama?.takeIf { it.isNotBlank() } ?: "Pelajar"
+            val session = _userSession.value
+            val learnerName = session?.nama?.takeIf { it.isNotBlank() } ?: "Pelajar"
+            val profileLabel = EducationCatalog.formatProfileBadge(
+                sekolah = session?.sekolah,
+                kelas = session?.kelas,
+                bidang = session?.bidang
+            )
+            val depthGuidance = EducationCatalog.tutorDepthGuidance(
+                sekolah = session?.sekolah,
+                kelas = session?.kelas,
+                bidang = session?.bidang
+            )
             val systemPrompt = """
-                Anda adalah Tutor Belajar AI yang sabar, jelas, dan terstruktur.
-                Anda sedang membantu $learnerName belajar memahami materi dari teks atau dokumen yang diberikan.
-                Aturan penjelasan belajar:
-                1. Gunakan Bahasa Indonesia yang jelas, runtut, dan mudah dipahami.
-                2. Pecah konsep rumit menjadi langkah-langkah atau poin-poin logis beserta contoh sederhana bila relevan.
-                3. Jika pengguna melampirkan dokumen (PDF, DOCX, PPTX, dll. yang telah diekstrak ke teks T2T), rujuk isi dokumen secara akurat tanpa mengarang informasi di luar konteks jika tidak diminta.
-                4. Akhiri dengan ringkasan singkat atau ajakan pertanyaan lanjutan agar pengguna benar-benar paham.
+                Anda adalah pendamping belajar yang sabar, jelas, dan terstruktur.
+                Anda sedang membantu $learnerName ($profileLabel) memahami materi dari teks atau dokumen yang diberikan.
+                Penyesuaian tingkat belajar:
+                $depthGuidance
+                Aturan penjelasan:
+                1. Gunakan Bahasa Indonesia yang alami, runtut, dan mudah dipahami.
+                2. Pecah konsep yang sulit menjadi langkah-langkah logis beserta contoh konkret yang relevan.
+                3. Jika pengguna melampirkan dokumen (PDF, DOCX, PPTX, dll. yang telah diekstrak menjadi teks), rujuk isi dokumen secara akurat tanpa mengarang informasi di luar konteks jika tidak diminta.
+                4. Akhiri dengan ringkasan inti singkat atau pertanyaan pancingan ringan agar pemahaman semakin kuat.
             """.trimIndent()
 
             val apiConversation = updatedHistory.map { msg ->
@@ -645,6 +663,12 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                 _generationProgressMessage.value = "Menghubungi AI (Percobaan $attempt dari $maxRetries)..."
 
                 try {
+                    val session = _userSession.value
+                    val learnerContext = if (session != null) {
+                        val badge = EducationCatalog.formatProfileBadge(session.sekolah, session.kelas, session.bidang)
+                        "Pelajar: ${session.nama} ($badge). ${EducationCatalog.tutorDepthGuidance(session.sekolah, session.kelas, session.bidang)}"
+                    } else ""
+
                     val questions = GeminiApiClient.generateExamQuestions(
                         kisiKisi = combinedKisiKisi,
                         pgCount = _selectedPgCount.value,
@@ -652,7 +676,8 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                         baseUrl = _baseUrl.value,
                         baseUrlType = _baseUrlType.value,
                         customKey = _customApiKey.value,
-                        model = _modelName.value
+                        model = _modelName.value,
+                        learnerContext = learnerContext
                     )
 
                     if (questions != null && (questions.pilihan_ganda.isNotEmpty() || questions.esai.isNotEmpty())) {
@@ -712,7 +737,13 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitExamAnswers() {
         val exam = _activeExam.value ?: return
-        val session = _userSession.value ?: UserSession(nama = "Pelajar", kelas = "Umum", absen = "-", isLogin = true)
+        val session = _userSession.value ?: UserSession(
+            nama = "Pelajar",
+            sekolah = SchoolLevel.SMA.displayName,
+            kelas = "10",
+            bidang = "Umum",
+            isLogin = true
+        )
 
         _gradingState.value = UiState.Loading
 
@@ -738,6 +769,11 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                     val studentAnswer = _studentEssayAnswers.value[index] ?: ""
                     Pair(essayQuestion, studentAnswer)
                 }
+                val learnerContext = EducationCatalog.formatProfileBadge(
+                    session.sekolah,
+                    session.kelas,
+                    session.bidang
+                )
 
                 stopExamTimer()
                 for (retry in 1..3) {
@@ -747,7 +783,8 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                             baseUrl = _baseUrl.value,
                             baseUrlType = _baseUrlType.value,
                             customKey = _customApiKey.value,
-                            model = _modelName.value
+                            model = _modelName.value,
+                            learnerContext = learnerContext
                         )
                         if (evaluations != null && evaluations.isNotEmpty()) {
                             essayGrades.addAll(evaluations)
@@ -807,10 +844,11 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
             val gradingJsonStr = gradingListAdapter.toJson(gradingItemsRawList)
 
             val questionsJsonStr = GeminiApiClient.moshi.adapter(ExamQuestions::class.java).toJson(exam)
+            val profileSummary = EducationCatalog.formatProfileBadge(session.sekolah, session.kelas, session.bidang)
             val attempt = ExamAttempt(
                 studentName = session.nama,
-                studentClass = session.kelas,
-                studentAbsen = session.absen,
+                studentClass = profileSummary,
+                studentAbsen = "",
                 pgCorrectCount = correctPgCount,
                 pgTotalCount = pgTotal,
                 pgScore = pgScore,
@@ -852,9 +890,9 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val shareText = buildString {
-            appendLine("RINGKASAN HASIL LATIHAN BELAJAR AI")
+            appendLine("RINGKASAN HASIL LATIHAN — PEMBELAJARAN DENGAN AI")
             appendLine("Nama: ${attempt.studentName}")
-            appendLine("Kelas/Bidang: ${attempt.studentClass}")
+            appendLine("Profil Belajar: ${attempt.studentClass}")
             appendLine("Nilai Akhir: ${attempt.finalScore} / 100")
             appendLine("- Pilihan Ganda: ${attempt.pgScore} (${attempt.pgCorrectCount}/${attempt.pgTotalCount} benar)")
             appendLine("- Esai: ${attempt.essayScore} / 100")
@@ -866,14 +904,14 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                     val scoreVal = (gradeMap?.get("skor") as? Double ?: gradeMap?.get("skor") as? Int ?: 0).toString()
                     val fbText = gradeMap?.get("umpan_balik") as? String ?: "-"
                     appendLine("Soal ${idx + 1}: ${q.soal}")
-                    appendLine("Nilai: $scoreVal/100 | Catatan AI: $fbText")
+                    appendLine("Nilai: $scoreVal/100 | Catatan: $fbText")
                 }
             }
         }
 
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Hasil Latihan Belajar AI - ${attempt.studentName}")
+            putExtra(Intent.EXTRA_SUBJECT, "Hasil Latihan Belajar - ${attempt.studentName}")
             putExtra(Intent.EXTRA_TEXT, shareText)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

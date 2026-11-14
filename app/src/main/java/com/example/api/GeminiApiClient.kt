@@ -16,7 +16,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.logging.HttpLoggingInterceptor
 import java.io.IOException
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -39,26 +45,74 @@ object GeminiApiClient {
         .addInterceptor(loggingInterceptor)
         .build()
 
+    // Dedicated client used ONLY for local loopback endpoints (https://localhost, https://127.0.0.1)
+    // so local dev servers with self-signed TLS certificates work without disabling TLS for remote hosts.
+    private val loopbackOkHttpClient: OkHttpClient by lazy {
+        val trustManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
+        }
+        okHttpClient.newBuilder()
+            .sslSocketFactory(sslContext.socketFactory, trustManager)
+            .hostnameVerifier(HostnameVerifier { hostname, _ -> isLoopbackHost(hostname) })
+            .build()
+    }
+
+    fun isLoopbackHost(host: String?): Boolean {
+        val normalized = host?.trim()?.lowercase()?.removePrefix("[")?.removeSuffix("]") ?: return false
+        return normalized == "localhost" ||
+            normalized == "127.0.0.1" ||
+            normalized == "::1" ||
+            normalized.startsWith("127.")
+    }
+
+    fun normalizeBaseUrlInput(rawBaseUrl: String): String {
+        val trimmed = rawBaseUrl.trim().trimEnd('/')
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            return trimmed
+        }
+        val lower = trimmed.lowercase()
+        val isBareLoopback = lower == "localhost" ||
+            lower.startsWith("localhost:") ||
+            lower.startsWith("localhost/") ||
+            lower == "127.0.0.1" ||
+            lower.startsWith("127.0.0.1:") ||
+            lower.startsWith("127.0.0.1/") ||
+            lower.startsWith("[::1]")
+        return if (isBareLoopback) "http://$trimmed" else trimmed
+    }
+
+    fun isValidBaseUrlInput(rawBaseUrl: String): Boolean {
+        val normalized = normalizeBaseUrlInput(rawBaseUrl)
+        if (!normalized.startsWith("http://", ignoreCase = true) &&
+            !normalized.startsWith("https://", ignoreCase = true)
+        ) {
+            return false
+        }
+        return normalized.toHttpUrlOrNull() != null
+    }
+
     /**
-     * Resolves full endpoint URL based on user-entered base URL and selected API type.
+     * Resolves full endpoint URL based on user-entered base URL and selected API type:
+     * - WITH_V1 (OpenAI style): ensures /v1/chat/completions
+     * - WITHOUT_V1 (Anthropic style): takes base URL without /v1 and appends /v1/messages
      */
     fun resolveEndpointUrl(rawBaseUrl: String, type: ApiBaseUrlType): String {
-        val trimmed = rawBaseUrl.trim().trimEnd('/')
+        val trimmed = normalizeBaseUrlInput(rawBaseUrl)
         require(trimmed.isNotEmpty()) { "Base URL tidak boleh kosong" }
         require(trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-            "Base URL harus diawali http:// atau https://"
+            "Base URL harus diawali http:// atau https:// (atau localhost / 127.0.0.1)"
         }
 
         val resolved = when (type) {
-            ApiBaseUrlType.ANTROPIC -> {
-                when {
-                    trimmed.endsWith("/messages", ignoreCase = true) -> trimmed
-                    trimmed.endsWith("/v1", ignoreCase = true) ||
-                        trimmed.endsWith("/api/v1", ignoreCase = true) -> "$trimmed/messages"
-                    else -> "$trimmed/v1/messages"
-                }
-            }
-            ApiBaseUrlType.CHAT_ID -> {
+            ApiBaseUrlType.WITH_V1 -> {
                 when {
                     trimmed.endsWith("/chat/completions", ignoreCase = true) -> trimmed
                     trimmed.endsWith("/v1", ignoreCase = true) ||
@@ -68,14 +122,12 @@ object GeminiApiClient {
                     else -> "$trimmed/v1/chat/completions"
                 }
             }
-            ApiBaseUrlType.RESPONSE -> {
+            ApiBaseUrlType.WITHOUT_V1 -> {
                 when {
-                    trimmed.endsWith("/responses", ignoreCase = true) -> trimmed
+                    trimmed.endsWith("/messages", ignoreCase = true) -> trimmed
                     trimmed.endsWith("/v1", ignoreCase = true) ||
-                        trimmed.endsWith("/api/v1", ignoreCase = true) -> "$trimmed/responses"
-                    trimmed.contains("openrouter.ai", ignoreCase = true) && !trimmed.endsWith("/api", ignoreCase = true) ->
-                        "$trimmed/api/v1/responses"
-                    else -> "$trimmed/v1/responses"
+                        trimmed.endsWith("/api/v1", ignoreCase = true) -> "$trimmed/messages"
+                    else -> "$trimmed/v1/messages"
                 }
             }
         }
@@ -91,7 +143,7 @@ object GeminiApiClient {
     fun normalizeModel(
         model: String,
         baseUrl: String = "",
-        baseUrlType: ApiBaseUrlType = ApiBaseUrlType.CHAT_ID
+        baseUrlType: ApiBaseUrlType = ApiBaseUrlType.WITH_V1
     ): String {
         val trimmed = model.trim()
         if (trimmed.isBlank()) {
@@ -127,8 +179,9 @@ object GeminiApiClient {
     }
 
     private suspend fun executeCancellable(request: Request): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val client = if (isLoopbackHost(request.url.host)) loopbackOkHttpClient else okHttpClient
         suspendCancellableCoroutine { continuation ->
-            val call = okHttpClient.newCall(request)
+            val call = client.newCall(request)
             continuation.invokeOnCancellation {
                 call.cancel()
             }
@@ -183,20 +236,7 @@ object GeminiApiClient {
             .addHeader("Content-Type", "application/json")
 
         val jsonBody = when (baseUrlType) {
-            ApiBaseUrlType.ANTROPIC -> {
-                requestBuilder
-                    .addHeader("x-api-key", cleanKey)
-                    .addHeader("anthropic-version", "2023-06-01")
-                val payload = AnthropicRequest(
-                    model = finalModel,
-                    maxTokens = if (expectJson) 4096 else 64,
-                    system = systemPrompt?.takeIf { it.isNotBlank() },
-                    messages = listOf(AnthropicMessage(role = "user", content = userPrompt)),
-                    temperature = temperature
-                )
-                moshi.adapter(AnthropicRequest::class.java).toJson(payload)
-            }
-            ApiBaseUrlType.CHAT_ID -> {
+            ApiBaseUrlType.WITH_V1 -> {
                 requestBuilder.addHeader("Authorization", "Bearer $cleanKey")
                 val msgs = buildList {
                     if (!systemPrompt.isNullOrBlank()) {
@@ -215,16 +255,18 @@ object GeminiApiClient {
                 )
                 moshi.adapter(OpenRouterChatRequest::class.java).toJson(payload)
             }
-            ApiBaseUrlType.RESPONSE -> {
-                requestBuilder.addHeader("Authorization", "Bearer $cleanKey")
-                val payload = ResponsesApiRequest(
+            ApiBaseUrlType.WITHOUT_V1 -> {
+                requestBuilder
+                    .addHeader("x-api-key", cleanKey)
+                    .addHeader("anthropic-version", "2023-06-01")
+                val payload = AnthropicRequest(
                     model = finalModel,
-                    instructions = systemPrompt?.takeIf { it.isNotBlank() },
-                    input = userPrompt,
-                    temperature = temperature,
-                    maxOutputTokens = if (expectJson) 4096 else 64
+                    maxTokens = if (expectJson) 4096 else 64,
+                    system = systemPrompt?.takeIf { it.isNotBlank() },
+                    messages = listOf(AnthropicMessage(role = "user", content = userPrompt)),
+                    temperature = temperature
                 )
-                moshi.adapter(ResponsesApiRequest::class.java).toJson(payload)
+                moshi.adapter(AnthropicRequest::class.java).toJson(payload)
             }
         }
 
@@ -253,22 +295,13 @@ object GeminiApiClient {
 
         val rawText: String? = try {
             when (baseUrlType) {
-                ApiBaseUrlType.ANTROPIC -> {
-                    val parsed = moshi.adapter(AnthropicResponse::class.java).fromJson(responseBody)
-                    parsed?.content?.mapNotNull { it.text }?.joinToString("\n")?.takeIf { it.isNotBlank() }
-                }
-                ApiBaseUrlType.CHAT_ID -> {
+                ApiBaseUrlType.WITH_V1 -> {
                     val parsed = moshi.adapter(OpenRouterChatResponse::class.java).fromJson(responseBody)
                     parsed?.choices?.firstOrNull()?.message?.content?.takeIf { it.isNotBlank() }
                 }
-                ApiBaseUrlType.RESPONSE -> {
-                    val parsed = moshi.adapter(ResponsesApiResponse::class.java).fromJson(responseBody)
-                    parsed?.outputText?.takeIf { it.isNotBlank() }
-                        ?: parsed?.output
-                            ?.flatMap { it.content.orEmpty() }
-                            ?.mapNotNull { it.text }
-                            ?.joinToString("\n")
-                            ?.takeIf { it.isNotBlank() }
+                ApiBaseUrlType.WITHOUT_V1 -> {
+                    val parsed = moshi.adapter(AnthropicResponse::class.java).fromJson(responseBody)
+                    parsed?.content?.mapNotNull { it.text }?.joinToString("\n")?.takeIf { it.isNotBlank() }
                 }
             }
         } catch (e: Exception) {
@@ -304,7 +337,7 @@ object GeminiApiClient {
     }
 
     /**
-     * Multi-turn learning chatbot & document/text explanation call across antropic, chat_id, and response API types.
+     * Multi-turn learning chatbot & document/text explanation call across WITH_V1 (OpenAI) and WITHOUT_V1 (Anthropic).
      */
     suspend fun sendStudyChatCompletion(
         baseUrl: String,
@@ -345,23 +378,7 @@ object GeminiApiClient {
         }
 
         val jsonBody = when (baseUrlType) {
-            ApiBaseUrlType.ANTROPIC -> {
-                requestBuilder
-                    .addHeader("x-api-key", cleanKey)
-                    .addHeader("anthropic-version", "2023-06-01")
-                val anthropicMessages = normalizedHistory.map { (role, content) ->
-                    AnthropicMessage(role = role, content = content)
-                }
-                val payload = AnthropicRequest(
-                    model = finalModel,
-                    maxTokens = 4096,
-                    system = systemPrompt,
-                    messages = anthropicMessages,
-                    temperature = 0.5f
-                )
-                moshi.adapter(AnthropicRequest::class.java).toJson(payload)
-            }
-            ApiBaseUrlType.CHAT_ID -> {
+            ApiBaseUrlType.WITH_V1 -> {
                 requestBuilder.addHeader("Authorization", "Bearer $cleanKey")
                 val chatMessages = buildList {
                     add(OpenRouterMessage(role = "system", content = systemPrompt))
@@ -383,24 +400,21 @@ object GeminiApiClient {
                 )
                 moshi.adapter(OpenRouterChatRequest::class.java).toJson(payload)
             }
-            ApiBaseUrlType.RESPONSE -> {
-                requestBuilder.addHeader("Authorization", "Bearer $cleanKey")
-                val formattedInput = if (conversationHistory.size <= 1) {
-                    conversationHistory.lastOrNull()?.second ?: ""
-                } else {
-                    conversationHistory.joinToString("\n\n") { (role, content) ->
-                        val label = if (role == "assistant") "Tutor AI" else "Pelajar"
-                        "[$label]: $content"
-                    }
+            ApiBaseUrlType.WITHOUT_V1 -> {
+                requestBuilder
+                    .addHeader("x-api-key", cleanKey)
+                    .addHeader("anthropic-version", "2023-06-01")
+                val anthropicMessages = normalizedHistory.map { (role, content) ->
+                    AnthropicMessage(role = role, content = content)
                 }
-                val payload = ResponsesApiRequest(
+                val payload = AnthropicRequest(
                     model = finalModel,
-                    instructions = systemPrompt,
-                    input = formattedInput,
-                    temperature = 0.5f,
-                    maxOutputTokens = 4096
+                    maxTokens = 4096,
+                    system = systemPrompt,
+                    messages = anthropicMessages,
+                    temperature = 0.5f
                 )
-                moshi.adapter(ResponsesApiRequest::class.java).toJson(payload)
+                moshi.adapter(AnthropicRequest::class.java).toJson(payload)
             }
         }
 
@@ -429,22 +443,13 @@ object GeminiApiClient {
 
         val rawText: String? = try {
             when (baseUrlType) {
-                ApiBaseUrlType.ANTROPIC -> {
-                    val parsed = moshi.adapter(AnthropicResponse::class.java).fromJson(responseBody)
-                    parsed?.content?.mapNotNull { it.text }?.joinToString("\n")?.takeIf { it.isNotBlank() }
-                }
-                ApiBaseUrlType.CHAT_ID -> {
+                ApiBaseUrlType.WITH_V1 -> {
                     val parsed = moshi.adapter(OpenRouterChatResponse::class.java).fromJson(responseBody)
                     parsed?.choices?.firstOrNull()?.message?.content?.takeIf { it.isNotBlank() }
                 }
-                ApiBaseUrlType.RESPONSE -> {
-                    val parsed = moshi.adapter(ResponsesApiResponse::class.java).fromJson(responseBody)
-                    parsed?.outputText?.takeIf { it.isNotBlank() }
-                        ?: parsed?.output
-                            ?.flatMap { it.content.orEmpty() }
-                            ?.mapNotNull { it.text }
-                            ?.joinToString("\n")
-                            ?.takeIf { it.isNotBlank() }
+                ApiBaseUrlType.WITHOUT_V1 -> {
+                    val parsed = moshi.adapter(AnthropicResponse::class.java).fromJson(responseBody)
+                    parsed?.content?.mapNotNull { it.text }?.joinToString("\n")?.takeIf { it.isNotBlank() }
                 }
             }
         } catch (e: Exception) {
@@ -464,15 +469,20 @@ object GeminiApiClient {
         baseUrl: String,
         baseUrlType: ApiBaseUrlType,
         customKey: String,
-        model: String
+        model: String,
+        learnerContext: String = ""
     ): ExamQuestions? {
+        val contextSection = if (learnerContext.isNotBlank()) {
+            "\nKonteks Pelajar:\n$learnerContext\nSesuaikan tingkat kesulitan, kosakata, dan kedalaman soal dengan jenjang, kelas, dan bidang pelajar tersebut."
+        } else ""
+
         val systemPrompt = """
-            Anda adalah pakar pembuat soal ujian sekolah di Indonesia. 
-            Tugas Anda adalah merumuskan soal ujian sekolah berkualitas tinggi berdasarkan kisi-kisi bahan ajar dari pengguna.
-            
-            Ujian harus terdiri dari:
+            Anda adalah pakar pembuat soal latihan belajar di Indonesia.
+            Tugas Anda adalah merumuskan soal latihan berkualitas tinggi berdasarkan kisi-kisi atau materi ajar dari pengguna.$contextSection
+
+            Latihan harus terdiri dari:
             - $pgCount Soal Pilihan Ganda (masing-masing memiliki opsi 'a', 'b', 'c', 'd' dan satu 'kunci' jawaban berupa karakter huruf kecil).
-            - $essayCount Soal Esai (masing-masing memiliki 'soal' dan deskripsi 'kunci_esensi' berupa kunci pemandu untuk mencocokkan jawaban esai siswa nanti).
+            - $essayCount Soal Esai (masing-masing memiliki 'soal' dan deskripsi 'kunci_esensi' berupa kunci pemandu untuk mencocokkan jawaban esai pelajar nanti).
 
             Anda WAJIB memberikan response murni dalam format JSON. Isi JSON harus mematuhi struktur kelas data berikut:
             {
@@ -533,31 +543,36 @@ object GeminiApiClient {
         baseUrl: String,
         baseUrlType: ApiBaseUrlType,
         customKey: String,
-        model: String
+        model: String,
+        learnerContext: String = ""
     ): List<EssayGradingItem>? {
         val textBuilder = StringBuilder()
-        textBuilder.append("Silakan nilai jawaban esai siswa berikut:\n\n")
+        textBuilder.append("Silakan nilai jawaban esai berikut:\n\n")
         essayQuestionsAndAnswers.forEachIndexed { index, pair ->
             val q = pair.first
             val ans = pair.second
             textBuilder.append("--- SOAL ${index + 1} ---\n")
             textBuilder.append("Pertanyaan: ${q.soal}\n")
             textBuilder.append("Kunci Esensi Jawab: ${q.kunci_esensi}\n")
-            textBuilder.append("Jawaban Siswa: $ans\n\n")
+            textBuilder.append("Jawaban Pelajar: $ans\n\n")
         }
 
+        val contextSection = if (learnerContext.isNotBlank()) {
+            "\nKonteks Pelajar: $learnerContext. Sesuaikan kedalaman umpan balik dengan jenjang tersebut."
+        } else ""
+
         val systemPrompt = """
-            Anda adalah guru profesional pengoreksi ujian esai. Tugas Anda adalah memberikan penilaian yang adil dan konsisten untuk masing-masing esai.
-            
-            Untuk tiap jawaban siswa, bandingkan dengan 'Kunci Esensi Jawab'.
-            Berikan skor numerik (skor) antara 0 hingga 100 berdasarkan ketepatan deskripsi, dan tulis umpan balik singkat (umpan_balik) dalam bahasa Indonesia tentang apa yang benar dan apa yang kurang.
+            Anda adalah pengajar profesional yang mengevaluasi jawaban esai. Tugas Anda adalah memberikan penilaian yang adil dan membangun untuk masing-masing esai.$contextSection
+
+            Untuk tiap jawaban, bandingkan dengan 'Kunci Esensi Jawab'.
+            Berikan skor numerik (skor) antara 0 hingga 100 berdasarkan ketepatan deskripsi, dan tulis umpan balik singkat (umpan_balik) dalam bahasa Indonesia tentang apa yang sudah tepat dan apa yang perlu dilengkapi.
 
             Anda WAJIB memberikan respons murni dalam JSON terstruktur:
             {
                "evaluasi": [
                    {
                        "skor": 85,
-                       "umpan_balik": "Penjelasan sangat lengkap dan memahami inti persoalan. Sangat bagus!"
+                       "umpan_balik": "Penjelasan sangat lengkap dan memahami inti persoalan. Bagus!"
                    }
                ]
             }
