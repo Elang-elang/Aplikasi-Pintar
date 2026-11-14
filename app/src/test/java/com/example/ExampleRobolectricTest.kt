@@ -2,8 +2,13 @@ package com.example
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -73,5 +78,74 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("subject_option_Rekayasa Perangkat Lunak (RPL)")
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun `global PG option selector and multi-answer PG card work as expected`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = ExamViewModel(app)
+
+        var currentSelection by androidx.compose.runtime.mutableStateOf<String?>(null)
+        var limitHit by androidx.compose.runtime.mutableStateOf(false)
+
+        composeTestRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                androidx.compose.foundation.layout.Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    com.example.ui.components.GlobalPgOptionSelector(
+                        selectedOptionCount = viewModel.selectedGlobalPgOptionCount.collectAsState().value,
+                        onSelect = { viewModel.setGlobalPgOptionCount(it) }
+                    )
+                    com.example.ui.components.MarkdownPgCard(
+                        questionIndex = 0,
+                        pg = com.example.api.PgQuestion(
+                            soal = "Pilih **dua** pernyataan yang benar tentang sel.",
+                            pilihan = mapOf(
+                                "a" to "Mitokondria menghasilkan **ATP**",
+                                "b" to "Ribosom mensintesis protein",
+                                "c" to "Dinding sel ada pada hewan",
+                                "d" to "Nukleus menyimpan DNA",
+                                "e" to "Kloroplas ada pada jamur"
+                            ),
+                            kunci_jawaban = listOf("a", "b"),
+                            maks_pilihan = 2
+                        ),
+                        selectedAnswer = currentSelection,
+                        onSelect = { key ->
+                            val next = com.example.model.ExamScoring.togglePgSelection(currentSelection, key, 2)
+                            if (next.limitReached) {
+                                limitHit = true
+                            } else {
+                                currentSelection = next.updatedValue
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // Default is AI Auto; click 5 options (A-E)
+        composeTestRule.onNodeWithTag("pg_opt_count_5").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(5, viewModel.selectedGlobalPgOptionCount.value)
+
+        // Click back to Auto AI
+        composeTestRule.onNodeWithTag("pg_opt_count_auto").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(null, viewModel.selectedGlobalPgOptionCount.value)
+
+        // Multi-answer badge and all 5 options (A-E) render properly and enforce max limit 2
+        composeTestRule.onNodeWithTag("pg_q0_multi_badge").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pg_q0_opt_a").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("pg_q0_opt_e").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("a,e", currentSelection)
+        assertFalse(limitHit)
+
+        composeTestRule.onNodeWithTag("pg_q0_opt_c").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("a,e", currentSelection)
+        assertTrue(limitHit)
     }
 }

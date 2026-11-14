@@ -45,10 +45,16 @@ import com.example.api.GeminiApiClient
 import com.example.api.PgQuestion
 import com.example.database.ExamAttempt
 import com.example.model.EducationCatalog
+import com.example.model.ExamScoring
 import com.example.model.SchoolLevel
 import com.example.ui.components.AcademicBookEmblem
 import com.example.ui.components.AcademicBookLoadingAnimation
 import com.example.ui.components.AcademicProfileFormFields
+import com.example.ui.components.GlobalPgOptionSelector
+import com.example.ui.components.MarkdownEssayCard
+import com.example.ui.components.MarkdownPgCard
+import com.example.ui.components.PgEvaluationReviewCard
+import com.example.ui.components.RichMarkdownContent
 import com.example.ui.theme.*
 import com.example.viewmodel.ExamViewModel
 import com.example.viewmodel.UiState
@@ -548,6 +554,7 @@ fun KisiKisiScreen(
     val attachedDoc by viewModel.attachedDocument.collectAsState()
     val docExtractionState by viewModel.documentExtractionState.collectAsState()
     val selectedTimerMin by viewModel.selectedTimerMinutes.collectAsState()
+    val selectedGlobalOptionCount by viewModel.selectedGlobalPgOptionCount.collectAsState()
 
     Scaffold(
         topBar = {
@@ -659,6 +666,27 @@ fun KisiKisiScreen(
                     modifier = Modifier.weight(1f)
                 )
             }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                text = "Jumlah Pilihan PG (Global)",
+                style = MaterialTheme.typography.titleSmall,
+                color = AcademicTextPrimary,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Berlaku seragam untuk seluruh soal pilihan ganda pada sesi latihan ini.",
+                style = MaterialTheme.typography.bodySmall,
+                color = AcademicTextMuted,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            GlobalPgOptionSelector(
+                selectedOptionCount = selectedGlobalOptionCount,
+                onSelect = { viewModel.setGlobalPgOptionCount(it) }
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -878,12 +906,22 @@ fun ExamScreen(
     onSubmitSuccess: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val exam by viewModel.activeExam.collectAsState()
     val pgAnswers by viewModel.studentPgAnswers.collectAsState()
     val essayAnswers by viewModel.studentEssayAnswers.collectAsState()
     val secondsRemaining by viewModel.secondsRemaining.collectAsState()
+    val pgSelectionNotice by viewModel.pgSelectionNotice.collectAsState()
 
     var showConfirmSubmit by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pgSelectionNotice) {
+        val msg = pgSelectionNotice
+        if (msg != null) {
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearPgSelectionNotice()
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.startExamTimer {
@@ -968,15 +1006,30 @@ fun ExamScreen(
                 ) {
                     if (examVal.pilihan_ganda.isNotEmpty()) {
                         item {
-                            Text(
-                                text = "Pilihan Ganda",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = AcademicBlue
-                            )
+                            val globalOptionCount = examVal.jumlah_opsi_pg
+                                ?: examVal.pilihan_ganda.firstOrNull()?.pilihan?.size
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Pilihan Ganda",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AcademicBlue
+                                )
+                                if (globalOptionCount != null && globalOptionCount in 3..6) {
+                                    Text(
+                                        text = "$globalOptionCount Opsi (${ExamScoring.optionRangeDisplay(globalOptionCount)})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = AcademicTextMuted
+                                    )
+                                }
+                            }
                         }
                         itemsIndexed(examVal.pilihan_ganda) { index, pg ->
-                            PgCard(
+                            MarkdownPgCard(
                                 questionIndex = index,
                                 pg = pg,
                                 selectedAnswer = pgAnswers[index],
@@ -996,7 +1049,7 @@ fun ExamScreen(
                             )
                         }
                         itemsIndexed(examVal.esai) { index, essay ->
-                            EssayCard(
+                            MarkdownEssayCard(
                                 questionIndex = index,
                                 question = essay,
                                 answerText = essayAnswers[index] ?: "",
@@ -1063,128 +1116,6 @@ fun ExamScreen(
     }
 }
 
-@Composable
-fun PgCard(
-    questionIndex: Int,
-    pg: PgQuestion,
-    selectedAnswer: String?,
-    onSelect: (String) -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = AcademicSurface),
-        border = BorderStroke(1.dp, AcademicBorder),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Soal ${questionIndex + 1}",
-                fontWeight = FontWeight.Bold,
-                color = AcademicBlue,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = pg.soal,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = AcademicTextPrimary
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val sortedOptions = remember(pg.pilihan) { pg.pilihan.entries.sortedBy { it.key } }
-            for (entry in sortedOptions) {
-                val letter = entry.key.lowercase()
-                val value = entry.value
-                val isSelected = selectedAnswer == letter
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("pg_q${questionIndex}_opt_$letter")
-                        .padding(vertical = 4.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (isSelected) AcademicBlueTint else Color.Transparent)
-                        .border(
-                            BorderStroke(
-                                if (isSelected) 1.5.dp else 1.dp,
-                                if (isSelected) AcademicBlue else AcademicBorder
-                            ),
-                            RoundedCornerShape(10.dp)
-                        )
-                        .clickable { onSelect(letter) }
-                        .padding(horizontal = 12.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .background(if (isSelected) AcademicBlue else AcademicSurfaceSubtle, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = letter.uppercase(),
-                            color = if (isSelected) Color.White else AcademicTextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = value,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AcademicTextPrimary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun EssayCard(
-    questionIndex: Int,
-    question: EssayQuestion,
-    answerText: String,
-    onValueChange: (String) -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = AcademicSurface),
-        border = BorderStroke(1.dp, AcademicBorder),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Esai ${questionIndex + 1}",
-                fontWeight = FontWeight.Bold,
-                color = AcademicBlue,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = question.soal,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = AcademicTextPrimary
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = answerText,
-                onValueChange = onValueChange,
-                placeholder = { Text("Tulis jawabanmu di sini...") },
-                colors = textFieldCosmosColors(),
-                shape = RoundedCornerShape(10.dp),
-                minLines = 4,
-                maxLines = 8,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-    }
-}
 
 @Composable
 fun ResultScreen(
@@ -1208,6 +1139,28 @@ fun ResultScreen(
             }
         } else {
             activeExam
+        }
+    }
+
+    val decodedPgAnswers: Map<Int, String> = remember(attempt) {
+        if (attempt == null || attempt.answersJson.isBlank()) {
+            emptyMap()
+        } else {
+            try {
+                val root = GeminiApiClient.moshi.adapter(Map::class.java).fromJson(attempt.answersJson)
+                val rawPg = root?.get("pg") as? Map<*, *> ?: emptyMap<Any, Any>()
+                buildMap {
+                    rawPg.forEach { (k, v) ->
+                        val idx = k?.toString()?.toIntOrNull()
+                        val ans = v?.toString()
+                        if (idx != null && ans != null) {
+                            put(idx, ans)
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                emptyMap()
+            }
         }
     }
 
@@ -1406,6 +1359,25 @@ fun ResultScreen(
                     }
                 }
 
+                if (attemptExam != null && attemptExam.pilihan_ganda.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Evaluasi Pilihan Ganda",
+                            fontWeight = FontWeight.Bold,
+                            color = AcademicTextPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    itemsIndexed(attemptExam.pilihan_ganda) { index, pgQuestion ->
+                        PgEvaluationReviewCard(
+                            questionIndex = index,
+                            pg = pgQuestion,
+                            rawStudentAnswer = decodedPgAnswers[index]
+                        )
+                    }
+                }
+
                 if (attemptExam != null && attemptExam.esai.isNotEmpty()) {
                     item {
                         Text(
@@ -1456,22 +1428,28 @@ fun ResultScreen(
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = essayQuestion.soal,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = AcademicTextPrimary
+                                RichMarkdownContent(
+                                    markdown = essayQuestion.soal,
+                                    textColor = AcademicTextPrimary,
+                                    baseTextStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    compact = true,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = feedback,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = AcademicTextMuted,
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(AcademicSurfaceSubtle, RoundedCornerShape(8.dp))
                                         .padding(10.dp)
-                                )
+                                ) {
+                                    RichMarkdownContent(
+                                        markdown = feedback,
+                                        textColor = AcademicTextMuted,
+                                        baseTextStyle = MaterialTheme.typography.bodySmall,
+                                        compact = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                         }
                     }

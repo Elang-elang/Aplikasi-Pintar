@@ -112,13 +112,59 @@ data class AnthropicResponse(
     val content: List<AnthropicContentBlock>? = null
 )
 
+enum class GlobalPgOptionCount(
+    val count: Int?,
+    val shortTitle: String,
+    val subtitle: String
+) {
+    AUTO_AI(null, "AI", "Otomatis"),
+    THREE(3, "3", "A–C"),
+    FOUR(4, "4", "A–D"),
+    FIVE(5, "5", "A–E"),
+    SIX(6, "6", "A–F");
+
+    companion object {
+        fun fromCount(count: Int?): GlobalPgOptionCount {
+            return entries.firstOrNull { it.count == count } ?: AUTO_AI
+        }
+    }
+}
+
 // --- Domain Exam Models ---
 @JsonClass(generateAdapter = true)
 data class PgQuestion(
     val soal: String,
     val pilihan: Map<String, String>, // e.g. {"a": "...", "b": "...", ...}
-    val kunci: String // "a", "b", "c", "d"
-)
+    val kunci: String? = null, // backward compatible single key ("a") or comma-separated ("a,c")
+    val kunci_jawaban: List<String> = emptyList(), // multi-answer keys e.g. ["a", "c"]
+    val maks_pilihan: Int = 1 // max selections permitted on this question (1 for single, 2+ for multi-answer)
+) {
+    fun resolvedCorrectKeys(): List<String> {
+        val validKeys = pilihan.keys.map { it.trim().lowercase() }.toSet()
+        val fromList = kunci_jawaban
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() && (validKeys.isEmpty() || it in validKeys) }
+            .distinct()
+        if (fromList.isNotEmpty()) return fromList.sorted()
+
+        return kunci
+            ?.split(",", ";", " ")
+            ?.map { it.trim().lowercase() }
+            ?.filter { it.isNotBlank() && (validKeys.isEmpty() || it in validKeys) }
+            ?.distinct()
+            ?.sorted()
+            ?: emptyList()
+    }
+
+    fun resolvedMaxSelections(): Int {
+        val correctCount = resolvedCorrectKeys().size.coerceAtLeast(1)
+        val optionCount = pilihan.size.coerceAtLeast(1)
+        return maxOf(maks_pilihan.coerceAtLeast(1), correctCount).coerceAtMost(optionCount)
+    }
+
+    val isMultiAnswer: Boolean
+        get() = resolvedMaxSelections() > 1 || resolvedCorrectKeys().size > 1
+}
 
 @JsonClass(generateAdapter = true)
 data class EssayQuestion(
@@ -128,6 +174,7 @@ data class EssayQuestion(
 
 @JsonClass(generateAdapter = true)
 data class ExamQuestions(
+    val jumlah_opsi_pg: Int? = null,
     val pilihan_ganda: List<PgQuestion>,
     val esai: List<EssayQuestion>
 )

@@ -470,45 +470,74 @@ object GeminiApiClient {
         baseUrlType: ApiBaseUrlType,
         customKey: String,
         model: String,
-        learnerContext: String = ""
+        learnerContext: String = "",
+        globalPgOptionCount: Int? = null
     ): ExamQuestions? {
         val contextSection = if (learnerContext.isNotBlank()) {
             "\nKonteks Pelajar:\n$learnerContext\nSesuaikan tingkat kesulitan, kosakata, dan kedalaman soal dengan jenjang, kelas, dan bidang pelajar tersebut."
         } else ""
+
+        val effectiveCount = globalPgOptionCount?.coerceIn(
+            com.example.model.ExamScoring.MIN_GLOBAL_OPTIONS,
+            com.example.model.ExamScoring.MAX_GLOBAL_OPTIONS
+        )
+        val exampleCount = effectiveCount ?: 5
+        val exampleLetters = com.example.model.ExamScoring.optionLettersForCount(exampleCount)
+        val optionsJsonExample = exampleLetters.joinToString(",\n                        ") { letter ->
+            "\"$letter\": \"Teks opsi ${letter.uppercase()} (boleh Markdown)\""
+        }
+
+        val globalOptionRule = if (effectiveCount != null) {
+            val requiredLettersStr = exampleLetters.joinToString(", ") { "'$it'" }
+            "- ATURAN GLOBAL OPSI PG (WAJIB DIPATUHI): Seluruh soal Pilihan Ganda dalam paket ini WAJIB memiliki tepat $effectiveCount pilihan ($requiredLettersStr). Nilai \"jumlah_opsi_pg\" wajib $effectiveCount, dan SETIAP soal PG tanpa terkecuali harus memiliki seluruh kunci $requiredLettersStr."
+        } else {
+            "- ATURAN GLOBAL OPSI PG (WAJIB DIPATUHI): Tentukan satu jumlah pilihan ganda yang seragam secara global (antara 3 hingga 6 pilihan, misalnya 4 untuk a–d atau 5 untuk a–e) pada field \"jumlah_opsi_pg\". Setelah ditentukan, SETIAP soal Pilihan Ganda tanpa terkecuali wajib memiliki seluruh huruf opsi berurutan dari 'a' sebanyak jumlah global tersebut (tidak boleh ada soal yang berbeda jumlah opsinya)."
+        }
 
         val systemPrompt = """
             Anda adalah pakar pembuat soal latihan belajar di Indonesia.
             Tugas Anda adalah merumuskan soal latihan berkualitas tinggi berdasarkan kisi-kisi atau materi ajar dari pengguna.$contextSection
 
             Latihan harus terdiri dari:
-            - $pgCount Soal Pilihan Ganda (masing-masing memiliki opsi 'a', 'b', 'c', 'd' dan satu 'kunci' jawaban berupa karakter huruf kecil).
-            - $essayCount Soal Esai (masing-masing memiliki 'soal' dan deskripsi 'kunci_esensi' berupa kunci pemandu untuk mencocokkan jawaban esai pelajar nanti).
+            - $pgCount Soal Pilihan Ganda (mendukung 1 jawaban benar atau multi-jawaban benar).
+            - $essayCount Soal Esai (masing-masing memiliki 'soal' dan deskripsi 'kunci_esensi' untuk evaluasi).
 
-            Anda WAJIB memberikan response murni dalam format JSON. Isi JSON harus mematuhi struktur kelas data berikut:
+            Aturan Format & Konten:
+            1. FORMAT MARKDOWN & GAMBAR WEB: Anda DIIZINKAN menggunakan format Markdown yang rapi (heading, **tebal**, *miring*, daftar, kode ```...```, maupun tabel Markdown) pada 'soal', teks 'pilihan', dan 'kunci_esensi' bila memperjelas persoalan. Jika visualisasi gambar dari web membantu menggambarkan soal (misalnya diagram sains, tokoh sejarah, grafik publik), Anda boleh menyertakan gambar Markdown `![deskripsi singkat](https://...)` dengan tautan HTTPS langsung yang valid dan terpercaya. Jangan mengarang URL palsu/broken.
+            2. MULTI-JAWABAN PG: Anda diizinkan membuat sebagian soal PG memiliki lebih dari satu jawaban benar (misalnya 2 atau 3 pilihan benar). Isi field "kunci_jawaban" sebagai array huruf kecil seperti ["a", "c"] dan "maks_pilihan" sesuai batas maksimal pilihan yang boleh dicentang pelajar (misal 2 atau 3). Untuk soal PG satu jawaban biasa, isi "kunci_jawaban": ["a"] dan "maks_pilihan": 1.
+            $globalOptionRule
+
+            Anda WAJIB memberikan response murni dalam format JSON sesuai struktur berikut:
             {
+               "jumlah_opsi_pg": $exampleCount,
                "pilihan_ganda": [
                    {
-                       "soal": "Teks pertanyaan pilihan ganda...",
+                       "soal": "Teks pertanyaan pilihan ganda (boleh menggunakan Markdown & `![alt](https://...)`)...",
                        "pilihan": {
-                           "a": "Opsi A",
-                           "b": "Opsi B",
-                           "c": "Opsi C",
-                           "d": "Opsi D"
+                           $optionsJsonExample
                        },
-                       "kunci": "a"
+                       "kunci_jawaban": ["a"],
+                       "maks_pilihan": 1
+                   },
+                   {
+                       "soal": "Contoh soal multi-jawaban (pilih 2 yang benar)...",
+                       "pilihan": {
+                           $optionsJsonExample
+                       },
+                       "kunci_jawaban": ["a", "c"],
+                       "maks_pilihan": 2
                    }
                ],
                "esai": [
                    {
-                       "soal": "Teks pertanyaan esai...",
-                       "kunci_esensi": "Poin-poin atau konsep utama jawaban esai yang benar..."
+                       "soal": "Teks pertanyaan esai (boleh menggunakan Markdown)...",
+                       "kunci_esensi": "Poin-poin utama jawaban esai yang benar..."
                    }
                ]
             }
 
             Catatan Penting:
-            - Buatlah pertanyaan yang bervariasi secara akademis relevan dengan kisi-kisi.
-            - Karakter kunci jawaban harus huruf kecil: "a", "b", "c", atau "d".
+            - Pastikan jumlah item pada "pilihan_ganda" mendekati/sama dengan $pgCount dan "esai" sama dengan $essayCount (kecuali salah satunya bernilai 0).
             - Jangan sertakan teks penjelasan apa pun di luar blok JSON. Kembalikan JSON siap pakai.
         """.trimIndent()
 
@@ -527,11 +556,15 @@ object GeminiApiClient {
             val cleanJsonStr = extractJson(rawResponse)
             Log.d("GeminiApiClient", "Clean Exam Questions JSON: ${cleanJsonStr.take(200)}")
 
-            val examQuestions = moshi.adapter(ExamQuestions::class.java).fromJson(cleanJsonStr)
-            if (examQuestions == null || (examQuestions.pilihan_ganda.isEmpty() && examQuestions.esai.isEmpty())) {
-                throw InvalidAiResponseException("Kesalahan permintaan yakni jawaban ai tidak sesuai")
-            }
-            examQuestions
+            val parsed = moshi.adapter(ExamQuestions::class.java).fromJson(cleanJsonStr)
+                ?: throw InvalidAiResponseException("Kesalahan permintaan yakni jawaban ai tidak sesuai")
+
+            com.example.model.ExamScoring.validateAndNormalizeExam(
+                exam = parsed,
+                requestedGlobalOptionCount = effectiveCount
+            )
+        } catch (e: InvalidAiResponseException) {
+            throw e
         } catch (e: Exception) {
             Log.e("GeminiApiClient", "JSON parsing failed on response: $rawResponse", e)
             throw InvalidAiResponseException("Kesalahan permintaan yakni jawaban ai tidak sesuai", e)
@@ -565,7 +598,8 @@ object GeminiApiClient {
             Anda adalah pengajar profesional yang mengevaluasi jawaban esai. Tugas Anda adalah memberikan penilaian yang adil dan membangun untuk masing-masing esai.$contextSection
 
             Untuk tiap jawaban, bandingkan dengan 'Kunci Esensi Jawab'.
-            Berikan skor numerik (skor) antara 0 hingga 100 berdasarkan ketepatan deskripsi, dan tulis umpan balik singkat (umpan_balik) dalam bahasa Indonesia tentang apa yang sudah tepat dan apa yang perlu dilengkapi.
+            Berikan skor numerik (skor) antara 0 hingga 100 berdasarkan ketepatan deskripsi, dan tulis umpan balik (umpan_balik) dalam bahasa Indonesia tentang apa yang sudah tepat dan apa yang perlu dilengkapi.
+            Anda boleh menggunakan format Markdown (**tebal**, daftar poin, kode, atau tabel) pada teks "umpan_balik" agar mudah dibaca.
 
             Anda WAJIB memberikan respons murni dalam JSON terstruktur:
             {

@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.example.model.EducationCatalog
 import com.example.model.StudySuggestion
 import com.example.ui.components.AcademicBookEmblem
+import com.example.ui.components.RichMarkdownContent
 import com.example.ui.components.StudyTypingIndicator
 import com.example.ui.theme.*
 import com.example.util.DocumentTextExtractor
@@ -624,7 +624,13 @@ private fun StudyMessageBubble(
                 1.dp,
                 if (message.isUser) AcademicBlue.copy(alpha = 0.35f) else AcademicBorder
             ),
-            modifier = Modifier.widthIn(max = 330.dp)
+            modifier = if (message.isUser) {
+                Modifier.widthIn(max = 320.dp)
+            } else {
+                Modifier
+                    .fillMaxWidth(0.95f)
+                    .widthIn(max = 520.dp)
+            }
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 if (message.isUser) {
@@ -675,15 +681,16 @@ private fun StudyMessageBubble(
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    SelectionContainer {
-                        Text(
-                            text = message.displayText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AcademicTextPrimary,
-                            lineHeight = 22.sp
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    RichMarkdownContent(
+                        markdown = message.displayText,
+                        textColor = AcademicTextPrimary,
+                        baseTextStyle = MaterialTheme.typography.bodyMedium,
+                        selectable = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("study_ai_markdown_body")
+                    )
                 }
             }
         }

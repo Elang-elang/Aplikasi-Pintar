@@ -17,6 +17,7 @@ import com.example.database.ExamDatabase
 import com.example.database.SavedExam
 import com.example.database.UserSession
 import com.example.model.EducationCatalog
+import com.example.model.ExamScoring
 import com.example.model.SchoolLevel
 import com.example.util.DocumentExtractionResult
 import com.example.util.DocumentTextExtractor
@@ -188,12 +189,20 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
     private var apiTestJob: Job? = null
     private var apiTestCountdownJob: Job? = null
 
-    // Configurable number of questions
+    // Configurable number of questions & global PG option count (null = AI decides 3..6)
     private val _selectedPgCount = MutableStateFlow(sharedPrefs.getInt("selected_pg_count", 45))
     val selectedPgCount: StateFlow<Int> = _selectedPgCount.asStateFlow()
 
     private val _selectedEssayCount = MutableStateFlow(sharedPrefs.getInt("selected_essay_count", 5))
     val selectedEssayCount: StateFlow<Int> = _selectedEssayCount.asStateFlow()
+
+    private val _selectedGlobalPgOptionCount = MutableStateFlow(
+        sharedPrefs.getInt("selected_global_pg_options", 0).takeIf { it in 3..6 }
+    )
+    val selectedGlobalPgOptionCount: StateFlow<Int?> = _selectedGlobalPgOptionCount.asStateFlow()
+
+    private val _pgSelectionNotice = MutableStateFlow<String?>(null)
+    val pgSelectionNotice: StateFlow<String?> = _pgSelectionNotice.asStateFlow()
 
     // Theme state (Light-first clean academic white & blue by default)
     private val _isDarkTheme = MutableStateFlow(sharedPrefs.getBoolean("is_dark_theme_academic_v1", false))
@@ -591,8 +600,10 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                 Aturan penjelasan:
                 1. Gunakan Bahasa Indonesia yang alami, runtut, dan mudah dipahami.
                 2. Pecah konsep yang sulit menjadi langkah-langkah logis beserta contoh konkret yang relevan.
-                3. Jika pengguna melampirkan dokumen (PDF, DOCX, PPTX, dll. yang telah diekstrak menjadi teks), rujuk isi dokumen secara akurat tanpa mengarang informasi di luar konteks jika tidak diminta.
-                4. Akhiri dengan ringkasan inti singkat atau pertanyaan pancingan ringan agar pemahaman semakin kuat.
+                3. Gunakan format Markdown lengkap secara rapi bila membantu kejelasan: judul/subjudul (`##`), **tebal**, *miring*, daftar poin/bernomor, tabel Markdown untuk perbandingan, serta blok kode berpagar (```...```) untuk rumus, kode, atau langkah terstruktur.
+                4. Jika ilustrasi visual membantu menjelaskan materi (seperti diagram anatomi, peta sejarah, atau gambar ilmiah), Anda diizinkan menyisipkan gambar dari web dengan sintaks Markdown `![deskripsi singkat](https://...)` menggunakan URL gambar HTTPS langsung yang valid dan terpercaya. Jangan mengarang URL palsu; bila tidak yakin URL gambar aktif, gunakan diagram teks atau tabel Markdown.
+                5. Jika pengguna melampirkan dokumen (PDF, DOCX, PPTX, dll. yang telah diekstrak menjadi teks), rujuk isi dokumen secara akurat tanpa mengarang informasi di luar konteks jika tidak diminta.
+                6. Akhiri dengan ringkasan inti singkat atau pertanyaan pancingan ringan agar pemahaman semakin kuat.
             """.trimIndent()
 
             val apiConversation = updatedHistory.map { msg ->
@@ -638,6 +649,16 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         _selectedEssayCount.value = essay
     }
 
+    fun setGlobalPgOptionCount(count: Int?) {
+        val valid = count?.coerceIn(ExamScoring.MIN_GLOBAL_OPTIONS, ExamScoring.MAX_GLOBAL_OPTIONS)
+        _selectedGlobalPgOptionCount.value = valid
+        sharedPrefs.edit().putInt("selected_global_pg_options", valid ?: 0).apply()
+    }
+
+    fun clearPgSelectionNotice() {
+        _pgSelectionNotice.value = null
+    }
+
     fun generateQuestionsFromKisiKisi(manualKisiKisi: String) {
         val docPayload = _attachedDocument.value?.t2tPayload
         val combinedKisiKisi = buildString {
@@ -677,7 +698,8 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
                         baseUrlType = _baseUrlType.value,
                         customKey = _customApiKey.value,
                         model = _modelName.value,
-                        learnerContext = learnerContext
+                        learnerContext = learnerContext,
+                        globalPgOptionCount = _selectedGlobalPgOptionCount.value
                     )
 
                     if (questions != null && (questions.pilihan_ganda.isNotEmpty() || questions.esai.isNotEmpty())) {
@@ -724,8 +746,26 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectPgAnswer(questionIndex: Int, answerKey: String) {
+        val maxSelections = _activeExam.value?.pilihan_ganda
+            ?.getOrNull(questionIndex)
+            ?.resolvedMaxSelections()
+            ?: 1
+        val currentSelection = _studentPgAnswers.value[questionIndex]
+        val result = ExamScoring.togglePgSelection(
+            currentSelection = currentSelection,
+            clickedKey = answerKey,
+            maxSelections = maxSelections
+        )
+        if (result.limitReached) {
+            _pgSelectionNotice.value = "Maksimal $maxSelections pilihan jawaban untuk Soal ${questionIndex + 1}."
+            return
+        }
         val updated = _studentPgAnswers.value.toMutableMap()
-        updated[questionIndex] = answerKey.lowercase()
+        if (result.updatedValue == null) {
+            updated.remove(questionIndex)
+        } else {
+            updated[questionIndex] = result.updatedValue
+        }
         _studentPgAnswers.value = updated
     }
 
@@ -748,16 +788,13 @@ class ExamViewModel(application: Application) : AndroidViewModel(application) {
         _gradingState.value = UiState.Loading
 
         viewModelScope.launch {
-            var correctPgCount = 0
-            val pgTotal = exam.pilihan_ganda.size
-            exam.pilihan_ganda.forEachIndexed { index, pg ->
-                val chosen = _studentPgAnswers.value[index]
-                if (chosen != null && chosen.trim().lowercase() == pg.kunci.trim().lowercase()) {
-                    correctPgCount++
-                }
-            }
-
-            val pgScore = if (pgTotal > 0) (correctPgCount * 100) / pgTotal else 0
+            val pgSummary = ExamScoring.calculatePgExamSummary(
+                questions = exam.pilihan_ganda,
+                studentAnswers = _studentPgAnswers.value
+            )
+            val correctPgCount = pgSummary.exactCorrectCount
+            val pgTotal = pgSummary.totalQuestions
+            val pgScore = pgSummary.pgScorePercent
 
             val essayGrades = mutableListOf<EssayGradingItem>()
             var essaySuccess = false
